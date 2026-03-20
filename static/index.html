@@ -122,41 +122,50 @@ async function startUpload() {
     log(`✗ ${e.message}`, 'err'); btn.disabled=false; return;
   }
 
-  // ── Step 2: upload each binary chunk ─────────────────────────────────────
-  // Each chunk is a raw 5 MB slice of the original PDF bytes.
-  // The server saves these to disk as chunk_000000.bin, chunk_000001.bin, …
-  let failed = 0;
-  for (let i = 0; i < totalChunks; i++) {
-    const start = i * CHUNK_SIZE;
-    const blob  = file.slice(start, start + CHUNK_SIZE); // raw binary slice
+  // Step 2: upload chunks in parallel, 5 at a time
+  // Instead of awaiting each chunk one by one, we batch into groups of
+  // CONCURRENCY and fire all fetches simultaneously with Promise.all().
+  // This gives ~5x throughput vs sequential on a typical connection.
+  const CONCURRENCY = 5;
+  let completed = 0;
+  let failed    = 0;
 
-    const form = new FormData();
+  async function uploadChunk(i) {
+    const start = i * CHUNK_SIZE;
+    const blob  = file.slice(start, start + CHUNK_SIZE);
+    const form  = new FormData();
     form.append('upload_id',   uploadId);
     form.append('passage_index', i);
     form.append('file',        blob, file.name);
 
-    // Retry up to 3× per chunk — guarantees reliability on flaky networks
-    let ok = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const res  = await fetch('/api/upload/chunk', { method:'POST', body:form });
         const data = await res.json();
         if (res.ok) {
-          ok = true;
-          // When last chunk lands, server triggers reassembly automatically
-          if (data.done) log(`✓ All chunks received — assembling PDF…`, 'ok');
-          break;
+          completed++;
+          setProgress(completed, totalChunks);
+          if (data.done) log('✓ All chunks received — assembling PDF…', 'ok');
+          return;
         }
-        log(`✗ chunk ${i} attempt ${attempt+1}: ${data.detail}`, 'err');
+        log('✗ chunk ' + i + ' attempt ' + (attempt+1) + ': ' + data.detail, 'err');
       } catch(e) {
-        log(`✗ chunk ${i} attempt ${attempt+1}: network error`, 'err');
+        log('✗ chunk ' + i + ' attempt ' + (attempt+1) + ': network error', 'err');
       }
     }
-    if (!ok) failed++;
-    setProgress(i + 1, totalChunks);
+    failed++;
   }
 
-  if (failed > 0) {
+  // Process in batches of CONCURRENCY
+  for (let i = 0; i < totalChunks; i += CONCURRENCY) {
+    const batch = [];
+    for (let j = i; j < Math.min(i + CONCURRENCY, totalChunks); j++) {
+      batch.push(uploadChunk(j));
+    }
+    await Promise.all(batch);
+  }
+
+    if (failed > 0) {
     log(`⚠ ${failed} chunk(s) failed to upload`, 'err');
     btn.disabled = false;
     return;
@@ -203,7 +212,7 @@ async function doSearch() {
   const container = document.getElementById('searchResults');
   container.innerHTML = '<p style="color:var(--muted);font-size:.8rem;font-family:\'IBM Plex Mono\',monospace">Searching…</p>';
   try {
-    const res  = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=100`);  <!-- limit=to searches -->
+    const res  = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=20`);
     const data = await res.json();
     if (!data.results.length) {
       container.innerHTML = '<p style="color:var(--muted);font-size:.8rem">No results.</p>';
