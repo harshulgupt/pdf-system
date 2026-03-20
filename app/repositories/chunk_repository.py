@@ -1,43 +1,86 @@
 """
-Repository Pattern — this is the KEY architectural piece the interviewer wants to see.
-
-The service layer calls ONLY these methods.
-To swap DB: implement a new class with the same interface (e.g. MongoChunkRepository).
-Routes never touch the DB directly.
+Repository Pattern — service layer calls only these methods, never SQLAlchemy directly.
+To swap DB: write a new class implementing AbstractChunkRepository.
 """
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from app.db.models import PDFChunk
+from app.db.models import PDFChunk, UploadSession
 
 
-# ---------- Abstract interface ----------
+# ── Abstract interface ────────────────────────────────────────────────────────
 
 class AbstractChunkRepository(ABC):
+
+    # --- Upload session tracking ---
     @abstractmethod
-    def save(self, chunk: PDFChunk) -> PDFChunk: ...
+    def create_session(self, upload_id: str, filename: str, total_chunks: int) -> UploadSession: ...
+
+    @abstractmethod
+    def get_session(self, upload_id: str) -> Optional[UploadSession]: ...
+
+    @abstractmethod
+    def increment_received(self, upload_id: str) -> UploadSession: ...
+
+    @abstractmethod
+    def set_status(self, upload_id: str, status: str) -> None: ...
+
+    # --- Text chunks (searchable index) ---
+    @abstractmethod
+    def save_text_chunk(self, chunk: PDFChunk) -> PDFChunk: ...
 
     @abstractmethod
     def search(self, query: str, limit: int) -> List[PDFChunk]: ...
 
     @abstractmethod
-    def get_by_file(self, file_id: str) -> List[PDFChunk]: ...
-
-    @abstractmethod
-    def delete_by_filename(self, filename: str) -> int: ...
+    def delete_by_upload_id(self, upload_id: str) -> int: ...
 
     @abstractmethod
     def delete_all(self) -> int: ...
 
 
-# ---------- SQLite / PostgreSQL implementation ----------
+# ── SQLite / PostgreSQL implementation ───────────────────────────────────────
 
 class SQLChunkRepository(AbstractChunkRepository):
     def __init__(self, db: Session):
         self.db = db
 
-    def save(self, chunk: PDFChunk) -> PDFChunk:
+    # --- Session tracking ---
+
+    def create_session(self, upload_id: str, filename: str, total_chunks: int) -> UploadSession:
+        session = UploadSession(
+            upload_id=upload_id,
+            filename=filename,
+            total_chunks=total_chunks,
+            received=0,
+            status="uploading",
+        )
+        self.db.add(session)
+        self.db.commit()
+        self.db.refresh(session)
+        return session
+
+    def get_session(self, upload_id: str) -> Optional[UploadSession]:
+        return self.db.query(UploadSession).filter(
+            UploadSession.upload_id == upload_id
+        ).first()
+
+    def increment_received(self, upload_id: str) -> UploadSession:
+        session = self.get_session(upload_id)
+        session.received += 1
+        self.db.commit()
+        self.db.refresh(session)
+        return session
+
+    def set_status(self, upload_id: str, status: str) -> None:
+        session = self.get_session(upload_id)
+        session.status = status
+        self.db.commit()
+
+    # --- Text chunks ---
+
+    def save_text_chunk(self, chunk: PDFChunk) -> PDFChunk:
         self.db.add(chunk)
         self.db.commit()
         self.db.refresh(chunk)
@@ -45,10 +88,9 @@ class SQLChunkRepository(AbstractChunkRepository):
 
     def search(self, query: str, limit: int = 20) -> List[PDFChunk]:
         """
-        Case-insensitive search.
-        SQLite LIKE is case-insensitive for ASCII but not Unicode — using
-        func.lower() on both sides makes it reliable for all characters.
-        Postgres upgrade: swap this body for a tsvector @@ tsquery call.
+        Case-insensitive search via func.lower().
+        Postgres upgrade: replace body with tsvector @@ tsquery.
+        Elasticsearch upgrade: replace body with ES client call.
         """
         q = query.lower()
         return (
@@ -58,40 +100,15 @@ class SQLChunkRepository(AbstractChunkRepository):
             .all()
         )
 
-    def get_by_file(self, file_id: str) -> List[PDFChunk]:
-        return (
-            self.db.query(PDFChunk)
-            .filter(PDFChunk.file_id == file_id)
-            .order_by(PDFChunk.chunk_index)
-            .all()
-        )
-
-    def delete_by_filename(self, filename: str) -> int:
-        """
-        Delete all chunks for a given filename before re-uploading.
-        This prevents stale results from old versions of the same file.
-        Returns count of rows deleted.
-        """
-        deleted = (
-            self.db.query(PDFChunk)
-            .filter(PDFChunk.filename == filename)
-            .delete(synchronize_session=False)
-        )
+    def delete_by_upload_id(self, upload_id: str) -> int:
+        deleted = self.db.query(PDFChunk).filter(
+            PDFChunk.upload_id == upload_id
+        ).delete(synchronize_session=False)
         self.db.commit()
         return deleted
 
     def delete_all(self) -> int:
-        """Wipe the entire index. Returns count deleted."""
+        self.db.query(UploadSession).delete(synchronize_session=False)
         deleted = self.db.query(PDFChunk).delete(synchronize_session=False)
         self.db.commit()
         return deleted
-
-
-# ---------- Example stub: swap to this for MongoDB ----------
-# class MongoChunkRepository(AbstractChunkRepository):
-#     def __init__(self, collection): self.col = collection
-#     def save(self, chunk): self.col.insert_one(chunk.__dict__); return chunk
-#     def search(self, query, limit=20): return list(self.col.find({"$text": {"$search": query}}).limit(limit))
-#     def get_by_file(self, file_id): return list(self.col.find({"file_id": file_id}))
-#     def delete_by_filename(self, filename): return self.col.delete_many({"filename": filename}).deleted_count
-#     def delete_all(self): return self.col.delete_many({}).deleted_count

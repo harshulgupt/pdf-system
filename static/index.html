@@ -6,44 +6,38 @@
 <title>PDF Processing System</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;500&display=swap');
-
-  :root {
-    --bg: #0d0d0d; --surface: #161616; --border: #2a2a2a;
-    --accent: #f4a900; --text: #e8e8e8; --muted: #666;
-    --success: #3ecf8e; --error: #ff4d4d; --warn: #f4a900;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans', sans-serif; min-height: 100vh; padding: 2rem; }
-  h1 { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 1.4rem; color: var(--accent); letter-spacing: 0.05em; margin-bottom: 0.25rem; }
-  .subtitle { font-size: 0.8rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; margin-bottom: 2.5rem; }
-  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1.5rem; margin-bottom: 1.5rem; max-width: 720px; }
-  .panel h2 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.15em; color: var(--muted); font-family: 'IBM Plex Mono', monospace; margin-bottom: 1rem; }
-  input[type="file"], input[type="text"] { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 0.6rem 0.8rem; font-family: 'IBM Plex Mono', monospace; font-size: 0.85rem; border-radius: 3px; margin-bottom: 0.75rem; outline: none; transition: border-color 0.2s; }
-  input:focus { border-color: var(--accent); }
-  .btn-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-  button { background: var(--accent); color: #000; border: none; padding: 0.6rem 1.2rem; font-family: 'IBM Plex Mono', monospace; font-size: 0.85rem; font-weight: 600; cursor: pointer; border-radius: 3px; transition: opacity 0.2s; }
-  button:hover { opacity: 0.85; }
-  button:disabled { opacity: 0.3; cursor: not-allowed; }
-  button.danger { background: #2a1010; color: var(--error); border: 1px solid #4a1a1a; }
-  button.danger:hover { background: #3a1515; }
-  .progress-bar { height: 4px; background: var(--border); border-radius: 2px; margin: 0.75rem 0; overflow: hidden; display: none; }
-  .progress-fill { height: 100%; background: var(--accent); border-radius: 2px; width: 0%; transition: width 0.3s; }
-  .log { font-family: 'IBM Plex Mono', monospace; font-size: 0.75rem; color: var(--muted); margin-top: 0.75rem; max-height: 120px; overflow-y: auto; line-height: 1.6; }
-  .log .ok  { color: var(--success); }
-  .log .err { color: var(--error); }
-  .log .warn { color: var(--warn); }
-  .active-file { font-family: 'IBM Plex Mono', monospace; font-size: 0.75rem; padding: 0.5rem 0.75rem; background: #0d1f0d; border: 1px solid #1a3a1a; border-radius: 3px; color: var(--success); margin-bottom: 0.75rem; display: none; }
-  .results { margin-top: 1rem; }
-  .result-card { border: 1px solid var(--border); border-radius: 3px; padding: 0.9rem; margin-bottom: 0.75rem; background: var(--bg); }
-  .result-meta { font-family: 'IBM Plex Mono', monospace; font-size: 0.7rem; color: var(--muted); margin-bottom: 0.4rem; }
-  .result-snippet { font-size: 0.85rem; line-height: 1.6; color: var(--text); }
-  mark { background: rgba(244,169,0,0.25); color: var(--accent); border-radius: 2px; padding: 0 2px; }
+  :root { --bg:#0d0d0d;--surface:#161616;--border:#2a2a2a;--accent:#f4a900;--text:#e8e8e8;--muted:#666;--success:#3ecf8e;--error:#ff4d4d;--warn:#f4a900; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'IBM Plex Sans',sans-serif;min-height:100vh;padding:2rem}
+  h1{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:1.4rem;color:var(--accent);letter-spacing:.05em;margin-bottom:.25rem}
+  .subtitle{font-size:.8rem;color:var(--muted);font-family:'IBM Plex Mono',monospace;margin-bottom:2.5rem}
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1.5rem;margin-bottom:1.5rem;max-width:720px}
+  .panel h2{font-size:.7rem;text-transform:uppercase;letter-spacing:.15em;color:var(--muted);font-family:'IBM Plex Mono',monospace;margin-bottom:1rem}
+  input[type=file],input[type=text]{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:.6rem .8rem;font-family:'IBM Plex Mono',monospace;font-size:.85rem;border-radius:3px;margin-bottom:.75rem;outline:none;transition:border-color .2s}
+  input:focus{border-color:var(--accent)}
+  .btn-row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+  button{background:var(--accent);color:#000;border:none;padding:.6rem 1.2rem;font-family:'IBM Plex Mono',monospace;font-size:.85rem;font-weight:600;cursor:pointer;border-radius:3px;transition:opacity .2s}
+  button:hover{opacity:.85}
+  button:disabled{opacity:.3;cursor:not-allowed}
+  button.danger{background:#2a1010;color:var(--error);border:1px solid #4a1a1a}
+  button.danger:hover{background:#3a1515}
+  .progress-wrap{margin:.75rem 0;display:none}
+  .progress-bar{height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+  .progress-fill{height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width .3s}
+  .progress-label{font-family:'IBM Plex Mono',monospace;font-size:.7rem;color:var(--muted);margin-top:.3rem}
+  .log{font-family:'IBM Plex Mono',monospace;font-size:.75rem;color:var(--muted);margin-top:.75rem;max-height:140px;overflow-y:auto;line-height:1.6}
+  .log .ok{color:var(--success)}.log .err{color:var(--error)}.log .warn{color:var(--warn)}
+  .active-file{font-family:'IBM Plex Mono',monospace;font-size:.75rem;padding:.5rem .75rem;background:#0d1f0d;border:1px solid #1a3a1a;border-radius:3px;color:var(--success);margin-bottom:.75rem;display:none}
+  .result-card{border:1px solid var(--border);border-radius:3px;padding:.9rem;margin-bottom:.75rem;background:var(--bg)}
+  .result-meta{font-family:'IBM Plex Mono',monospace;font-size:.7rem;color:var(--muted);margin-bottom:.4rem}
+  .result-snippet{font-size:.85rem;line-height:1.6;color:var(--text)}
+  mark{background:rgba(244,169,0,.25);color:var(--accent);border-radius:2px;padding:0 2px}
 </style>
 </head>
 <body>
 
 <h1>// PDF Processing System</h1>
-<p class="subtitle">upload · index · search — active file only</p>
+<p class="subtitle">chunked upload · server reassembly · full-text search</p>
 
 <div class="panel">
   <h2>Upload PDF</h2>
@@ -53,22 +47,34 @@
     <button id="uploadBtn" onclick="startUpload()">Upload & Index</button>
     <button class="danger" onclick="clearAll()">Clear index</button>
   </div>
-  <div class="progress-bar" id="progressBar"><div class="progress-fill" id="progressFill"></div></div>
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-label" id="progressLabel"></div>
+  </div>
   <div class="log" id="uploadLog"></div>
 </div>
 
 <div class="panel">
   <h2>Search</h2>
-  <input type="text" id="searchInput" placeholder="Search the indexed PDF…" onkeydown="if(event.key==='Enter') doSearch()">
+  <input type="text" id="searchInput" placeholder="Search the indexed PDF…" onkeydown="if(event.key==='Enter')doSearch()">
   <button onclick="doSearch()">Search</button>
-  <div class="results" id="searchResults"></div>
+  <div id="searchResults" style="margin-top:1rem"></div>
 </div>
 
 <script>
+const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB per binary chunk
+
 function log(msg, type='') {
   const el = document.getElementById('uploadLog');
   el.innerHTML += `<div class="${type}">${msg}</div>`;
   el.scrollTop = el.scrollHeight;
+}
+
+function setProgress(done, total) {
+  const pct = Math.round((done / total) * 100);
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressLabel').textContent =
+    `chunk ${done} / ${total}  (${pct}%)`;
 }
 
 function uid() {
@@ -91,36 +97,91 @@ async function startUpload() {
   const btn = document.getElementById('uploadBtn');
   btn.disabled = true;
   document.getElementById('uploadLog').innerHTML = '';
-  document.getElementById('progressBar').style.display = 'block';
-  document.getElementById('progressFill').style.width = '30%';
+  document.getElementById('progressWrap').style.display = 'block';
   document.getElementById('searchResults').innerHTML = '';
   setActiveFile(null);
 
-  log(`Uploading ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)…`);
+  const uploadId    = uid();
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
-  const form = new FormData();
-  form.append('file', file, file.name);
-  form.append('file_id', uid());
-  form.append('filename', file.name);
-  form.append('chunk_index', '0');
+  log(`File: ${file.name}  (${(file.size/1024/1024).toFixed(2)} MB)`);
+  log(`Splitting into ${totalChunks} chunk(s) of 5 MB each…`);
 
+  // ── Step 1: register the upload session ──────────────────────────────────
   try {
-    document.getElementById('progressFill').style.width = '70%';
-    const res = await fetch('/api/upload-chunk', { method:'POST', body:form });
-    document.getElementById('progressFill').style.width = '100%';
-    const data = await res.json();
+    const form = new FormData();
+    form.append('upload_id',    uploadId);
+    form.append('filename',     file.name);
+    form.append('total_chunks', totalChunks);
 
-    if (!res.ok) {
-      log(`✗ ${data.detail}`, 'err');
-    } else if (!data.searchable) {
-      log(`⚠ Uploaded but no text extracted — scanned/image PDF?`, 'warn');
-    } else {
-      log(`✓ Indexed ${data.text_chunks_created} chunks`, 'ok');
-      log(`✓ ${data.total_text_chars.toLocaleString()} characters ready to search`, 'ok');
-      setActiveFile(file.name);
-    }
+    const res  = await fetch('/api/upload/start', { method:'POST', body:form });
+    const data = await res.json();
+    if (!res.ok) { log(`✗ Start failed: ${data.detail}`, 'err'); btn.disabled=false; return; }
+    log(`Session created. upload_id: ${uploadId}`);
   } catch(e) {
-    log(`✗ Network error: ${e.message}`, 'err');
+    log(`✗ ${e.message}`, 'err'); btn.disabled=false; return;
+  }
+
+  // ── Step 2: upload each binary chunk ─────────────────────────────────────
+  // Each chunk is a raw 5 MB slice of the original PDF bytes.
+  // The server saves these to disk as chunk_000000.bin, chunk_000001.bin, …
+  let failed = 0;
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CHUNK_SIZE;
+    const blob  = file.slice(start, start + CHUNK_SIZE); // raw binary slice
+
+    const form = new FormData();
+    form.append('upload_id',   uploadId);
+    form.append('chunk_index', i);
+    form.append('file',        blob, file.name);
+
+    // Retry up to 3× per chunk — guarantees reliability on flaky networks
+    let ok = false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res  = await fetch('/api/upload/chunk', { method:'POST', body:form });
+        const data = await res.json();
+        if (res.ok) {
+          ok = true;
+          // When last chunk lands, server triggers reassembly automatically
+          if (data.done) log(`✓ All chunks received — assembling PDF…`, 'ok');
+          break;
+        }
+        log(`✗ chunk ${i} attempt ${attempt+1}: ${data.detail}`, 'err');
+      } catch(e) {
+        log(`✗ chunk ${i} attempt ${attempt+1}: network error`, 'err');
+      }
+    }
+    if (!ok) failed++;
+    setProgress(i + 1, totalChunks);
+  }
+
+  if (failed > 0) {
+    log(`⚠ ${failed} chunk(s) failed to upload`, 'err');
+    btn.disabled = false;
+    return;
+  }
+
+  // ── Step 3: poll for indexing completion ─────────────────────────────────
+  // The server reassembles binary chunks → parses PDF → indexes text.
+  // We poll every second until status == 'indexed'.
+  log(`Waiting for server to assemble and index…`);
+  for (let attempt = 0; attempt < 60; attempt++) {
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const res  = await fetch(`/api/upload/status/${uploadId}`);
+      const data = await res.json();
+
+      if (data.status === 'indexed') {
+        log(`✓ Indexed and ready to search!`, 'ok');
+        setActiveFile(file.name);
+        break;
+      } else if (data.status === 'failed') {
+        log(`✗ Server failed to process the PDF`, 'err');
+        break;
+      }
+      // still assembling — keep polling
+    } catch(e) { /* network blip, retry */ }
   }
 
   btn.disabled = false;
@@ -128,35 +189,26 @@ async function startUpload() {
 
 async function clearAll() {
   if (!confirm('Clear the entire index?')) return;
-  try {
-    const res = await fetch('/api/clear', { method:'DELETE' });
-    const data = await res.json();
-    log(`Index cleared (${data.chunks_deleted} chunks removed)`, 'warn');
-    setActiveFile(null);
-    document.getElementById('searchResults').innerHTML = '';
-    document.getElementById('uploadLog').innerHTML = '';
-    log(`Index cleared — upload a new PDF to start fresh`, 'warn');
-  } catch(e) {
-    log(`✗ ${e.message}`, 'err');
-  }
+  const res  = await fetch('/api/clear', { method:'DELETE' });
+  const data = await res.json();
+  document.getElementById('uploadLog').innerHTML = '';
+  log(`Index cleared (${data.chunks_deleted} chunks removed)`, 'warn');
+  setActiveFile(null);
+  document.getElementById('searchResults').innerHTML = '';
 }
 
 async function doSearch() {
   const q = document.getElementById('searchInput').value.trim();
   if (!q) return;
-
   const container = document.getElementById('searchResults');
-  container.innerHTML = '<p style="color:var(--muted);font-size:0.8rem;font-family:\'IBM Plex Mono\',monospace">Searching…</p>';
-
+  container.innerHTML = '<p style="color:var(--muted);font-size:.8rem;font-family:\'IBM Plex Mono\',monospace">Searching…</p>';
   try {
-    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=20`);
+    const res  = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=20`);
     const data = await res.json();
-
     if (!data.results.length) {
-      container.innerHTML = '<p style="color:var(--muted);font-size:0.8rem">No results. Upload a PDF first, or try a different word.</p>';
+      container.innerHTML = '<p style="color:var(--muted);font-size:.8rem">No results.</p>';
       return;
     }
-
     const re = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi');
     container.innerHTML = data.results.map(r => `
       <div class="result-card">
@@ -164,7 +216,7 @@ async function doSearch() {
         <div class="result-snippet">${r.snippet.replace(re,'<mark>$1</mark>')}</div>
       </div>`).join('');
   } catch(e) {
-    container.innerHTML = `<p style="color:var(--error);font-size:0.8rem">Error: ${e.message}</p>`;
+    container.innerHTML = `<p style="color:var(--error);font-size:.8rem">Error: ${e.message}</p>`;
   }
 }
 </script>

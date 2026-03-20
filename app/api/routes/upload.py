@@ -1,8 +1,10 @@
 """
-Upload route — receives the complete PDF and replaces any previous version.
+Upload routes — three endpoints for chunked upload protocol.
 
-POST /api/upload-chunk   multipart/form-data: file, file_id, filename
-DELETE /api/clear        wipes the entire index
+POST   /api/upload/start          → register upload, get upload_id
+POST   /api/upload/chunk          → send one binary chunk
+GET    /api/upload/status/{id}    → poll until status == 'indexed'
+DELETE /api/clear                 → wipe everything
 """
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.orm import Session
@@ -14,44 +16,76 @@ from app.storage.storage import get_storage
 
 router = APIRouter()
 
-MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB demo limit
+MAX_CHUNK_BYTES = 10 * 1024 * 1024  # 10 MB per chunk
 
 
-@router.post("/upload-chunk")
-async def upload_pdf(
-    file: UploadFile = File(...),
-    file_id: str = Form(...),
-    filename: str = Form(...),
-    chunk_index: int = Form(default=0),
+def _service(db: Session) -> PDFService:
+    return PDFService(SQLChunkRepository(db), get_storage())
+
+
+@router.post("/upload/start")
+def start_upload(
+    upload_id:    str = Form(...),
+    filename:     str = Form(...),
+    total_chunks: int = Form(...),
     db: Session = Depends(get_db),
 ):
+    """
+    Client calls this once before sending any chunks.
+    Creates a session row so the server knows how many chunks to expect.
+    """
     if not filename.lower().endswith(".pdf"):
-        raise HTTPException(400, "Only PDF files are accepted.")
+        raise HTTPException(400, "Only PDF files accepted.")
+    if total_chunks < 1:
+        raise HTTPException(400, "total_chunks must be >= 1.")
+
+    session = _service(db).start_upload(upload_id, filename, total_chunks)
+    return {
+        "upload_id":    session.upload_id,
+        "filename":     session.filename,
+        "total_chunks": session.total_chunks,
+        "status":       session.status,
+    }
+
+
+@router.post("/upload/chunk")
+async def upload_chunk(
+    upload_id:   str        = Form(...),
+    chunk_index: int        = Form(...),
+    file:        UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Receive one binary chunk. Can be called in parallel or out of order.
+    When the last chunk arrives, reassembly + indexing starts automatically.
+    """
+    if chunk_index < 0:
+        raise HTTPException(400, "chunk_index must be >= 0.")
 
     data = await file.read()
     if len(data) == 0:
-        raise HTTPException(400, "Empty file received.")
-    if len(data) > MAX_FILE_BYTES:
-        raise HTTPException(413, f"File exceeds {MAX_FILE_BYTES // 1024 // 1024} MB demo limit.")
+        raise HTTPException(400, "Empty chunk.")
+    if len(data) > MAX_CHUNK_BYTES:
+        raise HTTPException(413, f"Chunk too large (max {MAX_CHUNK_BYTES // 1024 // 1024} MB).")
 
-    repo = SQLChunkRepository(db)
-    service = PDFService(repo, get_storage())
-    chunks = service.ingest_pdf(pdf_data=data, filename=filename, file_id=file_id)
+    try:
+        result = _service(db).receive_chunk(upload_id, chunk_index, data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
-    total_text = sum(len(c.content) for c in chunks)
-    searchable = total_text > 0 and "[no extractable" not in chunks[0].content
-    return {
-        "status": "ok",
-        "file_id": file_id,
-        "text_chunks_created": len(chunks),
-        "total_text_chars": total_text,
-        "searchable": searchable,
-    }
+    return result
+
+
+@router.get("/upload/status/{upload_id}")
+def upload_status(upload_id: str, db: Session = Depends(get_db)):
+    """Poll this until done=true."""
+    try:
+        return _service(db).get_status(upload_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @router.delete("/clear")
 def clear_index(db: Session = Depends(get_db)):
-    """Wipe all indexed data so fresh uploads start clean."""
-    service = PDFService(SQLChunkRepository(db), get_storage())
-    deleted = service.clear_all()
+    deleted = _service(db).clear_all()
     return {"status": "ok", "chunks_deleted": deleted}

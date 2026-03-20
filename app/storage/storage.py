@@ -1,60 +1,69 @@
 """
-Storage abstraction — local filesystem now, S3 in production.
-To swap: set STORAGE_BACKEND=s3 and provide AWS credentials.
-The service layer calls only store_chunk() and retrieve_chunk().
+Storage layer — manages binary upload chunks on disk.
+
+Temp chunks:   ./uploads/{upload_id}/chunk_{index:06d}.bin
+Assembled PDF: ./uploads/{upload_id}/assembled.pdf
+
+After text extraction, the assembled PDF is kept for audit/retrieval.
+To swap to S3: implement S3Storage with the same interface.
 """
 import os
-import uuid
 from abc import ABC, abstractmethod
 
-STORAGE_DIR = os.getenv("STORAGE_DIR", "./chunk_storage")
-os.makedirs(STORAGE_DIR, exist_ok=True)
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 class AbstractStorage(ABC):
     @abstractmethod
-    def store_chunk(self, data: bytes, file_id: str, chunk_index: int) -> str: ...
+    def save_binary_chunk(self, upload_id: str, chunk_index: int, data: bytes) -> str: ...
 
     @abstractmethod
-    def retrieve_chunk(self, path: str) -> bytes: ...
+    def assemble(self, upload_id: str, total_chunks: int) -> str: ...
+
+    @abstractmethod
+    def read_file(self, path: str) -> bytes: ...
 
 
-class LocalFileStorage(AbstractStorage):
-    """Stores chunks as files on disk. In prod, swap for S3Storage."""
+class LocalStorage(AbstractStorage):
 
-    def store_chunk(self, data: bytes, file_id: str, chunk_index: int) -> str:
-        dir_path = os.path.join(STORAGE_DIR, file_id)
-        os.makedirs(dir_path, exist_ok=True)
-        path = os.path.join(dir_path, f"chunk_{chunk_index:06d}.bin")
+    def _dir(self, upload_id: str) -> str:
+        path = os.path.join(UPLOAD_DIR, upload_id)
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def save_binary_chunk(self, upload_id: str, chunk_index: int, data: bytes) -> str:
+        """
+        Save one raw binary chunk to disk.
+        Path: ./uploads/{upload_id}/chunk_000000.bin
+        Returns the path so we can verify it exists later.
+        """
+        path = os.path.join(self._dir(upload_id), f"chunk_{chunk_index:06d}.bin")
         with open(path, "wb") as f:
             f.write(data)
         return path
 
-    def retrieve_chunk(self, path: str) -> bytes:
+    def assemble(self, upload_id: str, total_chunks: int) -> str:
+        """
+        Concatenate all chunk files in order into one complete PDF.
+        This is the reassembly step — produces a valid PDF the parser can read.
+        Returns path to the assembled file.
+        """
+        out_path = os.path.join(self._dir(upload_id), "assembled.pdf")
+        with open(out_path, "wb") as out:
+            for i in range(total_chunks):
+                chunk_path = os.path.join(self._dir(upload_id), f"chunk_{i:06d}.bin")
+                with open(chunk_path, "rb") as f:
+                    out.write(f.read())
+        return out_path
+
+    def read_file(self, path: str) -> bytes:
         with open(path, "rb") as f:
             return f.read()
-
-
-# ---------- S3 stub (uncomment + pip install boto3 to activate) ----------
-# class S3Storage(AbstractStorage):
-#     def __init__(self):
-#         import boto3
-#         self.s3 = boto3.client("s3")
-#         self.bucket = os.getenv("S3_BUCKET")
-#
-#     def store_chunk(self, data, file_id, chunk_index):
-#         key = f"{file_id}/chunk_{chunk_index:06d}.bin"
-#         self.s3.put_object(Bucket=self.bucket, Key=key, Body=data)
-#         return key
-#
-#     def retrieve_chunk(self, path):
-#         obj = self.s3.get_object(Bucket=self.bucket, Key=path)
-#         return obj["Body"].read()
 
 
 def get_storage() -> AbstractStorage:
     backend = os.getenv("STORAGE_BACKEND", "local")
     if backend == "local":
-        return LocalFileStorage()
-    # elif backend == "s3": return S3Storage()
+        return LocalStorage()
     raise ValueError(f"Unknown storage backend: {backend}")
