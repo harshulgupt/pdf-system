@@ -13,7 +13,7 @@ router = APIRouter()
 @router.get("/search")
 def search(
     q:     str = Query(..., min_length=1, max_length=500),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=100), #limit number of searches to 100
     db: Session = Depends(get_db),
 ):
     results = PDFService(SQLChunkRepository(db), get_storage()).search(q.strip(), limit)
@@ -25,7 +25,7 @@ def search(
                 "chunk_id":    r.id,
                 "upload_id":   r.upload_id,
                 "filename":    r.filename,
-                "chunk_index": r.chunk_index,
+                "passage_index": r.passage_index,
                 "snippet":     r.content[:400] + ("…" if len(r.content) > 400 else ""),
             }
             for r in results
@@ -41,7 +41,7 @@ def debug(db: Session = Depends(get_db)):
         "chunks": [
             {
                 "filename":       r.filename,
-                "chunk_index":    r.chunk_index,
+                "passage_index":    r.passage_index,
                 "content_length": len(r.content),
                 "preview":        r.content[:150],
             }
