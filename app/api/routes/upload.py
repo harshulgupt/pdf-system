@@ -1,16 +1,8 @@
 """
-Upload route — receives one chunk at a time from the client.
+Upload route — receives the complete PDF and replaces any previous version.
 
-Why per-chunk uploads instead of one giant request?
-- A 20GB file can't fit in RAM; chunking keeps memory bounded.
-- Each chunk can be retried independently on network failure.
-- Enables parallel uploads (multiple chunks in flight simultaneously).
-
-Expected multipart/form-data fields:
-  file       : the raw chunk bytes
-  file_id    : UUID assigned by client (groups chunks for one file)
-  filename   : original filename
-  chunk_index: 0-based integer
+POST /api/upload-chunk   multipart/form-data: file, file_id, filename
+DELETE /api/clear        wipes the entire index
 """
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.orm import Session
@@ -22,44 +14,44 @@ from app.storage.storage import get_storage
 
 router = APIRouter()
 
-MAX_CHUNK_BYTES = 10 * 1024 * 1024  # 10 MB hard limit per chunk request
+MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB demo limit
 
 
 @router.post("/upload-chunk")
-async def upload_chunk(
+async def upload_pdf(
     file: UploadFile = File(...),
     file_id: str = Form(...),
     filename: str = Form(...),
-    chunk_index: int = Form(...),
+    chunk_index: int = Form(default=0),
     db: Session = Depends(get_db),
 ):
-    # --- Basic hardening ---
     if not filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Only PDF files are accepted.")
-    if chunk_index < 0:
-        raise HTTPException(400, "chunk_index must be non-negative.")
 
     data = await file.read()
-    if len(data) > MAX_CHUNK_BYTES:
-        raise HTTPException(413, f"Chunk exceeds {MAX_CHUNK_BYTES} bytes.")
     if len(data) == 0:
-        raise HTTPException(400, "Empty chunk received.")
+        raise HTTPException(400, "Empty file received.")
+    if len(data) > MAX_FILE_BYTES:
+        raise HTTPException(413, f"File exceeds {MAX_FILE_BYTES // 1024 // 1024} MB demo limit.")
 
     repo = SQLChunkRepository(db)
-    storage = get_storage()
-    service = PDFService(repo, storage)
+    service = PDFService(repo, get_storage())
+    chunks = service.ingest_pdf(pdf_data=data, filename=filename, file_id=file_id)
 
-    chunk = service.ingest_chunk(
-        chunk_data=data,
-        filename=filename,
-        file_id=file_id,
-        chunk_index=chunk_index,
-    )
-
+    total_text = sum(len(c.content) for c in chunks)
+    searchable = total_text > 0 and "[no extractable" not in chunks[0].content
     return {
         "status": "ok",
-        "chunk_id": chunk.id,
         "file_id": file_id,
-        "chunk_index": chunk_index,
-        "text_length": len(chunk.content),
+        "text_chunks_created": len(chunks),
+        "total_text_chars": total_text,
+        "searchable": searchable,
     }
+
+
+@router.delete("/clear")
+def clear_index(db: Session = Depends(get_db)):
+    """Wipe all indexed data so fresh uploads start clean."""
+    service = PDFService(SQLChunkRepository(db), get_storage())
+    deleted = service.clear_all()
+    return {"status": "ok", "chunks_deleted": deleted}

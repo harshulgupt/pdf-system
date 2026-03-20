@@ -8,6 +8,7 @@ Routes never touch the DB directly.
 from abc import ABC, abstractmethod
 from typing import List
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from app.db.models import PDFChunk
 
 
@@ -22,6 +23,12 @@ class AbstractChunkRepository(ABC):
 
     @abstractmethod
     def get_by_file(self, file_id: str) -> List[PDFChunk]: ...
+
+    @abstractmethod
+    def delete_by_filename(self, filename: str) -> int: ...
+
+    @abstractmethod
+    def delete_all(self) -> int: ...
 
 
 # ---------- SQLite / PostgreSQL implementation ----------
@@ -38,13 +45,15 @@ class SQLChunkRepository(AbstractChunkRepository):
 
     def search(self, query: str, limit: int = 20) -> List[PDFChunk]:
         """
-        SQLite: simple LIKE search.
-        Postgres upgrade path: use tsvector full-text search.
-        Elasticsearch upgrade path: replace this method body only.
+        Case-insensitive search.
+        SQLite LIKE is case-insensitive for ASCII but not Unicode — using
+        func.lower() on both sides makes it reliable for all characters.
+        Postgres upgrade: swap this body for a tsvector @@ tsquery call.
         """
+        q = query.lower()
         return (
             self.db.query(PDFChunk)
-            .filter(PDFChunk.content.ilike(f"%{query}%"))
+            .filter(func.lower(PDFChunk.content).contains(q))
             .limit(limit)
             .all()
         )
@@ -57,6 +66,26 @@ class SQLChunkRepository(AbstractChunkRepository):
             .all()
         )
 
+    def delete_by_filename(self, filename: str) -> int:
+        """
+        Delete all chunks for a given filename before re-uploading.
+        This prevents stale results from old versions of the same file.
+        Returns count of rows deleted.
+        """
+        deleted = (
+            self.db.query(PDFChunk)
+            .filter(PDFChunk.filename == filename)
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+        return deleted
+
+    def delete_all(self) -> int:
+        """Wipe the entire index. Returns count deleted."""
+        deleted = self.db.query(PDFChunk).delete(synchronize_session=False)
+        self.db.commit()
+        return deleted
+
 
 # ---------- Example stub: swap to this for MongoDB ----------
 # class MongoChunkRepository(AbstractChunkRepository):
@@ -64,3 +93,5 @@ class SQLChunkRepository(AbstractChunkRepository):
 #     def save(self, chunk): self.col.insert_one(chunk.__dict__); return chunk
 #     def search(self, query, limit=20): return list(self.col.find({"$text": {"$search": query}}).limit(limit))
 #     def get_by_file(self, file_id): return list(self.col.find({"file_id": file_id}))
+#     def delete_by_filename(self, filename): return self.col.delete_many({"filename": filename}).deleted_count
+#     def delete_all(self): return self.col.delete_many({}).deleted_count

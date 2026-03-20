@@ -3,7 +3,6 @@ Service Layer — all business logic lives here.
 Routes call services. Services call repositories + storage.
 No SQLAlchemy imports in routes. No HTTP logic here.
 """
-import uuid
 import io
 from typing import List
 
@@ -13,7 +12,8 @@ from app.db.models import PDFChunk
 from app.repositories.chunk_repository import AbstractChunkRepository
 from app.storage.storage import AbstractStorage
 
-CHUNK_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB per chunk
+TEXT_CHUNK_CHARS = 2000
+OVERLAP_CHARS    = 200
 
 
 class PDFService:
@@ -21,41 +21,66 @@ class PDFService:
         self.repo = repo
         self.storage = storage
 
-    def ingest_chunk(
-        self,
-        chunk_data: bytes,
-        filename: str,
-        file_id: str,
-        chunk_index: int,
-    ) -> PDFChunk:
+    def ingest_pdf(self, pdf_data: bytes, filename: str, file_id: str) -> List[PDFChunk]:
         """
-        Process one uploaded chunk:
-        1. Store raw bytes in storage (local/S3)
-        2. Extract text with pypdf
-        3. Save metadata + text to DB via repository
+        Full ingestion pipeline:
+        1. DELETE any existing chunks for this filename (prevents stale results)
+        2. Store raw bytes in storage
+        3. Extract all text from the complete PDF
+        4. Split text into overlapping chunks and save each to DB
         """
-        storage_path = self.storage.store_chunk(chunk_data, file_id, chunk_index)
-        text = self._extract_text(chunk_data)
+        # Step 1 — replace, don't append
+        removed = self.repo.delete_by_filename(filename)
 
-        chunk = PDFChunk(
-            file_id=file_id,
-            filename=filename,
-            chunk_index=chunk_index,
-            content=text or f"[binary chunk {chunk_index} — no extractable text]",
-            storage_path=storage_path,
-        )
-        return self.repo.save(chunk)
+        # Step 2 — store raw file
+        storage_path = self.storage.store_chunk(pdf_data, file_id, 0)
+
+        # Step 3 — extract text from the COMPLETE pdf
+        # (sliced bytes are not valid PDFs — pypdf would fail on fragments)
+        full_text = self._extract_text(pdf_data)
+
+        if not full_text:
+            chunk = PDFChunk(
+                file_id=file_id,
+                filename=filename,
+                chunk_index=0,
+                content="[no extractable text — scanned or image-only PDF]",
+                storage_path=storage_path,
+            )
+            return [self.repo.save(chunk)]
+
+        # Step 4 — chunk the text and index it
+        text_chunks = self._split_text(full_text, TEXT_CHUNK_CHARS, OVERLAP_CHARS)
+        saved = []
+        for i, text in enumerate(text_chunks):
+            chunk = PDFChunk(
+                file_id=file_id,
+                filename=filename,
+                chunk_index=i,
+                content=text,
+                storage_path=storage_path,
+            )
+            saved.append(self.repo.save(chunk))
+        return saved
+
+    def clear_all(self) -> int:
+        """Wipe the entire index. Returns number of chunks deleted."""
+        return self.repo.delete_all()
 
     def search(self, query: str, limit: int = 20) -> List[PDFChunk]:
-        """Full-text search across all ingested chunks."""
         return self.repo.search(query, limit)
 
     def _extract_text(self, data: bytes) -> str:
-        """Best-effort PDF text extraction. Returns empty string on failure."""
         try:
             reader = pypdf.PdfReader(io.BytesIO(data))
-            return "\n".join(
-                page.extract_text() or "" for page in reader.pages
-            ).strip()
+            pages = [page.extract_text() or "" for page in reader.pages]
+            return "\n".join(pages).strip()
         except Exception:
             return ""
+
+    def _split_text(self, text: str, size: int, overlap: int) -> List[str]:
+        chunks, start = [], 0
+        while start < len(text):
+            chunks.append(text[start:start + size])
+            start += size - overlap
+        return chunks
