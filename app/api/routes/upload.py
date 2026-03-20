@@ -51,7 +51,7 @@ def start_upload(
 @router.post("/upload/chunk")
 async def upload_chunk(
     upload_id:   str        = Form(...),
-    chunk_index: int        = Form(...),
+    passage_index: int        = Form(...),
     file:        UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
@@ -59,8 +59,8 @@ async def upload_chunk(
     Receive one binary chunk. Can be called in parallel or out of order.
     When the last chunk arrives, reassembly + indexing starts automatically.
     """
-    if chunk_index < 0:
-        raise HTTPException(400, "chunk_index must be >= 0.")
+    if passage_index < 0:
+        raise HTTPException(400, "passage_index must be >= 0.")
 
     data = await file.read()
     if len(data) == 0:
@@ -69,7 +69,7 @@ async def upload_chunk(
         raise HTTPException(413, f"Chunk too large (max {MAX_CHUNK_BYTES // 1024 // 1024} MB).")
 
     try:
-        result = _service(db).receive_chunk(upload_id, chunk_index, data)
+        result = _service(db).receive_chunk(upload_id, passage_index, data)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

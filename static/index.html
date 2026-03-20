@@ -148,7 +148,7 @@ async function startUpload() {
           if (data.done) log('✓ All chunks received — assembling PDF…', 'ok');
           return;
         }
-        log('✗ chunk ' + i + ' attempt ' + (attempt+1) + ': ' + data.detail, 'err');
+        log('✗ chunk ' + i + ' attempt ' + (attempt+1) + ': ' + (Array.isArray(data.detail) ? data.detail.map(e=>e.loc?.join('.')+': '+e.msg).join(', ') : String(data.detail)), 'err');
       } catch(e) {
         log('✗ chunk ' + i + ' attempt ' + (attempt+1) + ': network error', 'err');
       }
@@ -212,7 +212,7 @@ async function doSearch() {
   const container = document.getElementById('searchResults');
   container.innerHTML = '<p style="color:var(--muted);font-size:.8rem;font-family:\'IBM Plex Mono\',monospace">Searching…</p>';
   try {
-    const res  = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=20`);
+    const res  = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=50`);
     const data = await res.json();
     if (!data.results.length) {
       container.innerHTML = '<p style="color:var(--muted);font-size:.8rem">No results.</p>';
@@ -221,7 +221,7 @@ async function doSearch() {
     const re = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi');
     container.innerHTML = data.results.map(r => `
       <div class="result-card">
-        <div class="result-meta">${r.filename} · chunk ${r.passage_index}</div>
+        <div class="result-meta">${r.filename} · passage ${r.passage_index}</div>
         <div class="result-snippet">${r.snippet.replace(re,'<mark>$1</mark>')}</div>
       </div>`).join('');
   } catch(e) {

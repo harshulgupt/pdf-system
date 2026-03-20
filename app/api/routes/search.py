@@ -13,7 +13,7 @@ router = APIRouter()
 @router.get("/search")
 def search(
     q:     str = Query(..., min_length=1, max_length=500),
-    limit: int = Query(100, ge=1, le=100), #limit number of searches to 100
+    limit: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
     results = PDFService(SQLChunkRepository(db), get_storage()).search(q.strip(), limit)

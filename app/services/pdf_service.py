@@ -39,7 +39,7 @@ class PDFService:
 
     # ── Step 2: receive one binary chunk ─────────────────────────────────────
 
-    def receive_chunk(self, upload_id: str, chunk_index: int, data: bytes) -> dict:
+    def receive_chunk(self, upload_id: str, passage_index: int, data: bytes) -> dict:
         """
         Save one binary chunk to disk and update the session counter.
         When all chunks have arrived, trigger reassembly + indexing automatically.
@@ -52,7 +52,7 @@ class PDFService:
             raise ValueError(f"Session status is '{session.status}', cannot accept more chunks.")
 
         # Save raw bytes to disk
-        self.storage.save_binary_chunk(upload_id, chunk_index, data)
+        self.storage.save_binary_chunk(upload_id, passage_index, data)
 
         # Increment counter
         session = self.repo.increment_received(upload_id)
@@ -120,7 +120,7 @@ class PDFService:
                 self.repo.save_text_chunk(PDFChunk(
                     upload_id   = session.upload_id,
                     filename    = session.filename,
-                    chunk_index = i,
+                    passage_index = i,
                     content     = text,
                 ))
 
