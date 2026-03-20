@@ -21,13 +21,23 @@
   button:disabled{opacity:.3;cursor:not-allowed}
   button.danger{background:#2a1010;color:var(--error);border:1px solid #4a1a1a}
   button.danger:hover{background:#3a1515}
-  .progress-wrap{margin:.75rem 0;display:none}
+
+  /* Upload progress bar — shows real chunk upload % */
+  .upload-progress{margin:.75rem 0;display:none}
   .progress-bar{height:4px;background:var(--border);border-radius:2px;overflow:hidden}
   .progress-fill{height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width .3s}
   .progress-label{font-family:'IBM Plex Mono',monospace;font-size:.7rem;color:var(--muted);margin-top:.3rem}
+
+  /* Processing status — separate from upload, shown after all chunks land */
+  .processing-status{display:none;margin:.75rem 0;padding:.6rem .8rem;background:#0d0d1a;border:1px solid #2a2a4a;border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:.75rem;align-items:center;gap:.6rem}
+  .processing-status.visible{display:flex}
+  .spinner{width:12px;height:12px;border:2px solid #2a2a4a;border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .processing-text{color:var(--warn)}
+
+  .active-file{font-family:'IBM Plex Mono',monospace;font-size:.75rem;padding:.5rem .75rem;background:#0d1f0d;border:1px solid #1a3a1a;border-radius:3px;color:var(--success);margin-bottom:.75rem;display:none}
   .log{font-family:'IBM Plex Mono',monospace;font-size:.75rem;color:var(--muted);margin-top:.75rem;max-height:140px;overflow-y:auto;line-height:1.6}
   .log .ok{color:var(--success)}.log .err{color:var(--error)}.log .warn{color:var(--warn)}
-  .active-file{font-family:'IBM Plex Mono',monospace;font-size:.75rem;padding:.5rem .75rem;background:#0d1f0d;border:1px solid #1a3a1a;border-radius:3px;color:var(--success);margin-bottom:.75rem;display:none}
   .result-card{border:1px solid var(--border);border-radius:3px;padding:.9rem;margin-bottom:.75rem;background:var(--bg)}
   .result-meta{font-family:'IBM Plex Mono',monospace;font-size:.7rem;color:var(--muted);margin-bottom:.4rem}
   .result-snippet{font-size:.85rem;line-height:1.6;color:var(--text)}
@@ -47,10 +57,21 @@
     <button id="uploadBtn" onclick="startUpload()">Upload & Index</button>
     <button class="danger" onclick="clearAll()">Clear index</button>
   </div>
-  <div class="progress-wrap" id="progressWrap">
+
+  <!-- Section 1: real upload progress (chunks sent to server) -->
+  <div class="upload-progress" id="uploadProgress">
     <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-    <div class="progress-label" id="progressLabel"></div>
+    <div class="progress-label" id="progressLabel">Uploading…</div>
   </div>
+
+  <!-- Section 2: background processing status with spinner -->
+  <!-- Only appears after upload is 100% done -->
+  <!-- Spinner proves it is working, not fake -->
+  <div class="processing-status" id="processingStatus">
+    <div class="spinner" id="spinner"></div>
+    <span class="processing-text" id="processingText">Waiting…</span>
+  </div>
+
   <div class="log" id="uploadLog"></div>
 </div>
 
@@ -62,7 +83,8 @@
 </div>
 
 <script>
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB per binary chunk
+const CHUNK_SIZE  = 5 * 1024 * 1024;
+const CONCURRENCY = 5;
 
 function log(msg, type='') {
   const el = document.getElementById('uploadLog');
@@ -70,11 +92,26 @@ function log(msg, type='') {
   el.scrollTop = el.scrollHeight;
 }
 
-function setProgress(done, total) {
+function setUploadProgress(done, total) {
   const pct = Math.round((done / total) * 100);
   document.getElementById('progressFill').style.width = pct + '%';
   document.getElementById('progressLabel').textContent =
-    `chunk ${done} / ${total}  (${pct}%)`;
+    `uploading chunks: ${done} / ${total}  (${pct}%)`;
+}
+
+function setProcessingStatus(text, done=false) {
+  const el     = document.getElementById('processingStatus');
+  const textEl = document.getElementById('processingText');
+  const spinner = document.getElementById('spinner');
+  el.classList.add('visible');
+  textEl.textContent = text;
+  // hide spinner when fully done
+  spinner.style.display = done ? 'none' : 'block';
+  if (done) textEl.style.color = 'var(--success)';
+}
+
+function hideProcessingStatus() {
+  document.getElementById('processingStatus').classList.remove('visible');
 }
 
 function uid() {
@@ -97,8 +134,10 @@ async function startUpload() {
   const btn = document.getElementById('uploadBtn');
   btn.disabled = true;
   document.getElementById('uploadLog').innerHTML = '';
-  document.getElementById('progressWrap').style.display = 'block';
+  document.getElementById('uploadProgress').style.display = 'block';
+  document.getElementById('progressFill').style.width = '0%';
   document.getElementById('searchResults').innerHTML = '';
+  hideProcessingStatus();
   setActiveFile(null);
 
   const uploadId    = uid();
@@ -107,36 +146,30 @@ async function startUpload() {
   log(`File: ${file.name}  (${(file.size/1024/1024).toFixed(2)} MB)`);
   log(`Splitting into ${totalChunks} chunk(s) of 5 MB each…`);
 
-  // ── Step 1: register the upload session ──────────────────────────────────
+  // Step 1: register session
   try {
     const form = new FormData();
     form.append('upload_id',    uploadId);
     form.append('filename',     file.name);
     form.append('total_chunks', totalChunks);
-
     const res  = await fetch('/api/upload/start', { method:'POST', body:form });
     const data = await res.json();
     if (!res.ok) { log(`✗ Start failed: ${data.detail}`, 'err'); btn.disabled=false; return; }
-    log(`Session created. upload_id: ${uploadId}`);
+    log(`Session created.`);
   } catch(e) {
     log(`✗ ${e.message}`, 'err'); btn.disabled=false; return;
   }
 
-  // Step 2: upload chunks in parallel, 5 at a time
-  // Instead of awaiting each chunk one by one, we batch into groups of
-  // CONCURRENCY and fire all fetches simultaneously with Promise.all().
-  // This gives ~5x throughput vs sequential on a typical connection.
-  const CONCURRENCY = 5;
+  // Step 2: upload chunks in parallel (5 at a time)
   let completed = 0;
   let failed    = 0;
 
   async function uploadChunk(i) {
-    const start = i * CHUNK_SIZE;
-    const blob  = file.slice(start, start + CHUNK_SIZE);
-    const form  = new FormData();
-    form.append('upload_id',   uploadId);
+    const blob = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    const form = new FormData();
+    form.append('upload_id',     uploadId);
     form.append('passage_index', i);
-    form.append('file',        blob, file.name);
+    form.append('file',          blob, file.name);
 
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
@@ -144,19 +177,20 @@ async function startUpload() {
         const data = await res.json();
         if (res.ok) {
           completed++;
-          setProgress(completed, totalChunks);
-          if (data.done) log('✓ All chunks received — assembling PDF…', 'ok');
+          setUploadProgress(completed, totalChunks);
           return;
         }
-        log('✗ chunk ' + i + ' attempt ' + (attempt+1) + ': ' + (Array.isArray(data.detail) ? data.detail.map(e=>e.loc?.join('.')+': '+e.msg).join(', ') : String(data.detail)), 'err');
+        const errMsg = Array.isArray(data.detail)
+          ? data.detail.map(e => e.loc?.join('.')+': '+e.msg).join(', ')
+          : String(data.detail);
+        log(`✗ chunk ${i} attempt ${attempt+1} [HTTP ${res.status}]: ${errMsg}`, 'err');
       } catch(e) {
-        log('✗ chunk ' + i + ' attempt ' + (attempt+1) + ': network error', 'err');
+        log(`✗ chunk ${i} attempt ${attempt+1}: network error`, 'err');
       }
     }
     failed++;
   }
 
-  // Process in batches of CONCURRENCY
   for (let i = 0; i < totalChunks; i += CONCURRENCY) {
     const batch = [];
     for (let j = i; j < Math.min(i + CONCURRENCY, totalChunks); j++) {
@@ -165,23 +199,25 @@ async function startUpload() {
     await Promise.all(batch);
   }
 
-    if (failed > 0) {
+  if (failed > 0) {
     log(`⚠ ${failed} chunk(s) failed to upload`, 'err');
     btn.disabled = false;
     return;
   }
 
-  // Step 3: poll for background task completion
-  // The server is now assembling + indexing in the background.
-  // We poll every second and show exactly what stage it's on
-  // so the user knows it's working and not stuck.
-  const statusMessages = {
-    'uploading':  'Chunks received, starting assembly…',
-    'assembling': 'Assembling binary chunks into PDF…',
+  log(`✓ All ${totalChunks} chunks uploaded.`, 'ok');
+
+  // Step 3: show processing spinner — completely separate from upload bar
+  // Server is now running assembly + indexing in the background.
+  // We poll every second and update the spinner label honestly.
+  setProcessingStatus('Waiting for server to start processing…');
+
+  const statusLabels = {
+    'uploading':  'Server received all chunks, queuing…',
+    'assembling': 'Assembling chunks into complete PDF…',
     'indexing':   'Extracting and indexing text passages…',
-    'indexed':    null,
-    'failed':     null,
   };
+
   let lastStatus = '';
   for (let attempt = 0; attempt < 120; attempt++) {
     await new Promise(r => setTimeout(r, 1000));
@@ -189,18 +225,21 @@ async function startUpload() {
       const res  = await fetch(`/api/upload/status/${uploadId}`);
       const data = await res.json();
 
-      // Only log when status changes — avoids spamming the same message
       if (data.status !== lastStatus) {
         lastStatus = data.status;
+
         if (data.status === 'indexed') {
-          log('✓ Indexed and ready to search!', 'ok');
+          setProcessingStatus('✓ Indexed — ready to search', true);
+          log(`✓ Done! File is indexed and searchable.`, 'ok');
           setActiveFile(file.name);
           break;
         } else if (data.status === 'failed') {
-          log('✗ Server failed to process the PDF', 'err');
+          setProcessingStatus('✗ Processing failed', true);
+          document.getElementById('processingText').style.color = 'var(--error)';
+          log(`✗ Server failed to process the PDF`, 'err');
           break;
         } else {
-          log('⟳ ' + (statusMessages[data.status] || data.status) + '', 'warn');
+          setProcessingStatus(statusLabels[data.status] || data.status);
         }
       }
     } catch(e) { /* network blip, keep polling */ }
@@ -214,7 +253,9 @@ async function clearAll() {
   const res  = await fetch('/api/clear', { method:'DELETE' });
   const data = await res.json();
   document.getElementById('uploadLog').innerHTML = '';
-  log(`Index cleared (${data.chunks_deleted} chunks removed)`, 'warn');
+  hideProcessingStatus();
+  document.getElementById('uploadProgress').style.display = 'none';
+  log(`Index cleared (${data.chunks_deleted} passages removed)`, 'warn');
   setActiveFile(null);
   document.getElementById('searchResults').innerHTML = '';
 }
@@ -225,7 +266,7 @@ async function doSearch() {
   const container = document.getElementById('searchResults');
   container.innerHTML = '<p style="color:var(--muted);font-size:.8rem;font-family:\'IBM Plex Mono\',monospace">Searching…</p>';
   try {
-    const res  = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=20`);
+    const res  = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=50`);
     const data = await res.json();
     if (!data.results.length) {
       container.innerHTML = '<p style="color:var(--muted);font-size:.8rem">No results.</p>';
