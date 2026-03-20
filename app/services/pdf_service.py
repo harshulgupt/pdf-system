@@ -15,7 +15,8 @@ via FastAPI BackgroundTasks so the chunk response is instant.
 """
 from typing import List
 
-import fitz  # pymupdf — 10-20x faster than pypdf for text extraction
+import io
+import pypdf
 
 from app.db.models import PDFChunk, UploadSession
 from app.repositories.chunk_repository import AbstractChunkRepository
@@ -120,14 +121,9 @@ class PDFService:
         return self.repo.delete_all()
 
     def _extract_text(self, data: bytes) -> str:
-        """
-        pymupdf (fitz) is 10-20x faster than pypdf for text extraction.
-        It uses MuPDF under the hood — a C library optimised for PDF rendering.
-        Fallback returns empty string so the caller can handle gracefully.
-        """
         try:
-            doc = fitz.open(stream=data, filetype="pdf")
-            return "\n".join(page.get_text() for page in doc).strip()
+            reader = pypdf.PdfReader(io.BytesIO(data))
+            return "\n".join(p.extract_text() or "" for p in reader.pages).strip()
         except Exception:
             return ""
 
