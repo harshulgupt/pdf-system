@@ -171,26 +171,39 @@ async function startUpload() {
     return;
   }
 
-  // ── Step 3: poll for indexing completion ─────────────────────────────────
-  // The server reassembles binary chunks → parses PDF → indexes text.
-  // We poll every second until status == 'indexed'.
-  log(`Waiting for server to assemble and index…`);
-  for (let attempt = 0; attempt < 60; attempt++) {
+  // Step 3: poll for background task completion
+  // The server is now assembling + indexing in the background.
+  // We poll every second and show exactly what stage it's on
+  // so the user knows it's working and not stuck.
+  const statusMessages = {
+    'uploading':  'Chunks received, starting assembly…',
+    'assembling': 'Assembling binary chunks into PDF…',
+    'indexing':   'Extracting and indexing text passages…',
+    'indexed':    null,
+    'failed':     null,
+  };
+  let lastStatus = '';
+  for (let attempt = 0; attempt < 120; attempt++) {
     await new Promise(r => setTimeout(r, 1000));
     try {
       const res  = await fetch(`/api/upload/status/${uploadId}`);
       const data = await res.json();
 
-      if (data.status === 'indexed') {
-        log(`✓ Indexed and ready to search!`, 'ok');
-        setActiveFile(file.name);
-        break;
-      } else if (data.status === 'failed') {
-        log(`✗ Server failed to process the PDF`, 'err');
-        break;
+      // Only log when status changes — avoids spamming the same message
+      if (data.status !== lastStatus) {
+        lastStatus = data.status;
+        if (data.status === 'indexed') {
+          log('✓ Indexed and ready to search!', 'ok');
+          setActiveFile(file.name);
+          break;
+        } else if (data.status === 'failed') {
+          log('✗ Server failed to process the PDF', 'err');
+          break;
+        } else {
+          log('⟳ ' + (statusMessages[data.status] || data.status) + '', 'warn');
+        }
       }
-      // still assembling — keep polling
-    } catch(e) { /* network blip, retry */ }
+    } catch(e) { /* network blip, keep polling */ }
   }
 
   btn.disabled = false;
@@ -212,7 +225,7 @@ async function doSearch() {
   const container = document.getElementById('searchResults');
   container.innerHTML = '<p style="color:var(--muted);font-size:.8rem;font-family:\'IBM Plex Mono\',monospace">Searching…</p>';
   try {
-    const res  = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=50`);
+    const res  = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=20`);
     const data = await res.json();
     if (!data.results.length) {
       container.innerHTML = '<p style="color:var(--muted);font-size:.8rem">No results.</p>';

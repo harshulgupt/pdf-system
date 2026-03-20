@@ -1,12 +1,12 @@
 """
-Upload routes — three endpoints for chunked upload protocol.
+Upload routes.
 
-POST   /api/upload/start          → register upload, get upload_id
-POST   /api/upload/chunk          → send one binary chunk
-GET    /api/upload/status/{id}    → poll until status == 'indexed'
+POST   /api/upload/start          → register upload session
+POST   /api/upload/chunk          → receive one binary chunk, return IMMEDIATELY
+GET    /api/upload/status/{id}    → poll: uploading → assembling → indexing → indexed
 DELETE /api/clear                 → wipe everything
 """
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -16,7 +16,7 @@ from app.storage.storage import get_storage
 
 router = APIRouter()
 
-MAX_CHUNK_BYTES = 10 * 1024 * 1024  # 10 MB per chunk
+MAX_CHUNK_BYTES = 10 * 1024 * 1024
 
 
 def _service(db: Session) -> PDFService:
@@ -30,10 +30,6 @@ def start_upload(
     total_chunks: int = Form(...),
     db: Session = Depends(get_db),
 ):
-    """
-    Client calls this once before sending any chunks.
-    Creates a session row so the server knows how many chunks to expect.
-    """
     if not filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Only PDF files accepted.")
     if total_chunks < 1:
@@ -50,14 +46,17 @@ def start_upload(
 
 @router.post("/upload/chunk")
 async def upload_chunk(
-    upload_id:   str        = Form(...),
-    passage_index: int        = Form(...),
-    file:        UploadFile = File(...),
-    db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks,
+    upload_id:        str        = Form(...),
+    passage_index:    int        = Form(...),
+    file:             UploadFile = File(...),
+    db:               Session    = Depends(get_db),
 ):
     """
-    Receive one binary chunk. Can be called in parallel or out of order.
-    When the last chunk arrives, reassembly + indexing starts automatically.
+    Saves the binary chunk to disk and returns immediately.
+    If this was the last chunk, assembly+indexing is handed off to a
+    background task — it runs AFTER this response is sent to the client.
+    That's why upload feels instant even for huge files.
     """
     if passage_index < 0:
         raise HTTPException(400, "passage_index must be >= 0.")
@@ -69,16 +68,20 @@ async def upload_chunk(
         raise HTTPException(413, f"Chunk too large (max {MAX_CHUNK_BYTES // 1024 // 1024} MB).")
 
     try:
-        result = _service(db).receive_chunk(upload_id, passage_index, data)
+        svc    = _service(db)
+        result = svc.receive_chunk(upload_id, passage_index, data)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+    # All chunks received? Hand off to background — don't block this response
+    if result["all_received"]:
+        background_tasks.add_task(svc.assemble_and_index, upload_id)
 
     return result
 
 
 @router.get("/upload/status/{upload_id}")
 def upload_status(upload_id: str, db: Session = Depends(get_db)):
-    """Poll this until done=true."""
     try:
         return _service(db).get_status(upload_id)
     except ValueError as e:
