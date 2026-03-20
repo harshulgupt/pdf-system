@@ -26,12 +26,24 @@ def search(
                 "upload_id":   r.upload_id,
                 "filename":    r.filename,
                 "passage_index": r.passage_index,
-                "snippet":     r.content[:400] + ("…" if len(r.content) > 400 else ""),
+                "snippet": extract_snippet(r.content, q.strip(), 100),
             }
             for r in results
         ],
     }
 
+def extract_snippet(content: str, query: str, window: int = 100) -> str:
+    pos = content.lower().find(query.lower())
+    if pos == -1:
+        return content[:200] + ("…" if len(content) > 200 else "")
+    start = max(0, pos - window)
+    end = min(len(content), pos + len(query) + window)
+    snippet = content[start:end]
+    if start > 0:
+        snippet = "…" + snippet
+    if end < len(content):
+        snippet = snippet + "…"
+    return snippet
 
 @router.get("/debug")
 def debug(db: Session = Depends(get_db)):
