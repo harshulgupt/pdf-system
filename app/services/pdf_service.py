@@ -13,10 +13,9 @@ THE CHUNKED UPLOAD FLOW:
 NOTE: receive_chunk() no longer triggers assembly — the route does that
 via FastAPI BackgroundTasks so the chunk response is instant.
 """
-import io
 from typing import List
 
-import pypdf
+import fitz  # pymupdf — 10-20x faster than pypdf for text extraction
 
 from app.db.models import PDFChunk, UploadSession
 from app.repositories.chunk_repository import AbstractChunkRepository
@@ -83,13 +82,17 @@ class PDFService:
                 if full_text
                 else ["[no extractable text — scanned or image-only PDF]"]
             )
-            for i, text in enumerate(passages):
-                self.repo.save_text_chunk(PDFChunk(
+            # Bulk insert — one transaction for all passages instead of one per passage.
+            # For a 500-passage book: 1 commit vs 500 commits.
+            self.repo.bulk_save_text_chunks([
+                PDFChunk(
                     upload_id     = upload_id,
                     filename      = session.filename,
                     passage_index = i,
                     content       = text,
-                ))
+                )
+                for i, text in enumerate(passages)
+            ])
 
             self.repo.set_status(upload_id, "indexed")
 
@@ -117,9 +120,14 @@ class PDFService:
         return self.repo.delete_all()
 
     def _extract_text(self, data: bytes) -> str:
+        """
+        pymupdf (fitz) is 10-20x faster than pypdf for text extraction.
+        It uses MuPDF under the hood — a C library optimised for PDF rendering.
+        Fallback returns empty string so the caller can handle gracefully.
+        """
         try:
-            reader = pypdf.PdfReader(io.BytesIO(data))
-            return "\n".join(p.extract_text() or "" for p in reader.pages).strip()
+            doc = fitz.open(stream=data, filetype="pdf")
+            return "\n".join(page.get_text() for page in doc).strip()
         except Exception:
             return ""
 

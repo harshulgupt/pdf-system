@@ -31,6 +31,9 @@ class AbstractChunkRepository(ABC):
     def save_text_chunk(self, chunk: PDFChunk) -> PDFChunk: ...
 
     @abstractmethod
+    def bulk_save_text_chunks(self, chunks: List[PDFChunk]) -> None: ...
+
+    @abstractmethod
     def search(self, query: str, limit: int) -> List[PDFChunk]: ...
 
     @abstractmethod
@@ -85,6 +88,14 @@ class SQLChunkRepository(AbstractChunkRepository):
         self.db.commit()
         self.db.refresh(chunk)
         return chunk
+
+    def bulk_save_text_chunks(self, chunks: List[PDFChunk]) -> None:
+        """
+        Insert all passages in a single transaction.
+        500 passages = 1 commit instead of 500 — dramatically faster.
+        """
+        self.db.bulk_save_objects(chunks)
+        self.db.commit()
 
     def search(self, query: str, limit: int = 20) -> List[PDFChunk]:
         """
