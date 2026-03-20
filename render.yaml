@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: pdf-processing-system
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: STORAGE_BACKEND
+        value: local
+      - key: DATABASE_URL
+        value: sqlite:///./pdf_store.db

@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF Processing System</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;500&display=swap');
+
+  :root {
+    --bg: #0d0d0d;
+    --surface: #161616;
+    --border: #2a2a2a;
+    --accent: #f4a900;
+    --text: #e8e8e8;
+    --muted: #666;
+    --success: #3ecf8e;
+    --error: #ff4d4d;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    min-height: 100vh;
+    padding: 2rem;
+  }
+
+  h1 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 600;
+    font-size: 1.4rem;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+    margin-bottom: 0.25rem;
+  }
+
+  .subtitle {
+    font-size: 0.8rem;
+    color: var(--muted);
+    font-family: 'IBM Plex Mono', monospace;
+    margin-bottom: 2.5rem;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    max-width: 720px;
+  }
+
+  .panel h2 {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    font-family: 'IBM Plex Mono', monospace;
+    margin-bottom: 1rem;
+  }
+
+  input[type="file"], input[type="text"] {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.6rem 0.8rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.85rem;
+    border-radius: 3px;
+    margin-bottom: 0.75rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  input:focus { border-color: var(--accent); }
+
+  button {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    padding: 0.6rem 1.2rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: opacity 0.2s;
+  }
+
+  button:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .progress-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin: 0.75rem 0;
+    overflow: hidden;
+    display: none;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.3s;
+  }
+
+  .log {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 0.75rem;
+    max-height: 120px;
+    overflow-y: auto;
+    line-height: 1.6;
+  }
+
+  .log .ok  { color: var(--success); }
+  .log .err { color: var(--error); }
+
+  .results { margin-top: 1rem; }
+
+  .result-card {
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0.9rem;
+    margin-bottom: 0.75rem;
+    background: var(--bg);
+  }
+
+  .result-meta {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--muted);
+    margin-bottom: 0.4rem;
+  }
+
+  .result-snippet {
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  mark {
+    background: rgba(244, 169, 0, 0.25);
+    color: var(--accent);
+    border-radius: 2px;
+    padding: 0 2px;
+  }
+</style>
+</head>
+<body>
+
+<h1>// PDF Processing System</h1>
+<p class="subtitle">chunked ingestion · full-text search · swappable storage</p>
+
+<!-- UPLOAD PANEL -->
+<div class="panel">
+  <h2>Upload PDF</h2>
+  <input type="file" id="fileInput" accept=".pdf">
+  <div style="font-size:0.75rem; color:var(--muted); margin-bottom:0.75rem; font-family:'IBM Plex Mono',monospace;">
+    File is split into 5MB chunks client-side and uploaded sequentially.
+  </div>
+  <button id="uploadBtn" onclick="startUpload()">Upload & Process</button>
+  <div class="progress-bar" id="progressBar">
+    <div class="progress-fill" id="progressFill"></div>
+  </div>
+  <div class="log" id="uploadLog"></div>
+</div>
+
+<!-- SEARCH PANEL -->
+<div class="panel">
+  <h2>Search</h2>
+  <input type="text" id="searchInput" placeholder="Search across all ingested PDFs…" onkeydown="if(event.key==='Enter') doSearch()">
+  <button onclick="doSearch()">Search</button>
+  <div class="results" id="searchResults"></div>
+</div>
+
+<script>
+const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB
+
+function log(msg, type='') {
+  const el = document.getElementById('uploadLog');
+  el.innerHTML += `<div class="${type}">${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function generateFileId() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+async function startUpload() {
+  const fileInput = document.getElementById('fileInput');
+  const file = fileInput.files[0];
+  if (!file) { alert('Select a PDF first.'); return; }
+
+  const btn = document.getElementById('uploadBtn');
+  btn.disabled = true;
+  document.getElementById('uploadLog').innerHTML = '';
+  document.getElementById('progressBar').style.display = 'block';
+
+  const fileId = generateFileId();
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  log(`File: ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)`);
+  log(`Splitting into ${totalChunks} chunk(s) of 5 MB each…`);
+
+  let failed = 0;
+
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CHUNK_SIZE;
+    const end   = Math.min(start + CHUNK_SIZE, file.size);
+    const blob  = file.slice(start, end);
+
+    const form = new FormData();
+    form.append('file', blob, file.name);
+    form.append('file_id', fileId);
+    form.append('filename', file.name);
+    form.append('chunk_index', i);
+
+    // Retry up to 3 times per chunk (reliability guarantee)
+    let ok = false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch('/api/upload-chunk', { method: 'POST', body: form });
+        if (res.ok) {
+          const data = await res.json();
+          log(`✓ chunk ${i+1}/${totalChunks} — ${data.text_length} chars extracted`, 'ok');
+          ok = true;
+          break;
+        } else {
+          const err = await res.json();
+          log(`✗ chunk ${i+1} attempt ${attempt+1}: ${err.detail}`, 'err');
+        }
+      } catch (e) {
+        log(`✗ chunk ${i+1} attempt ${attempt+1}: network error`, 'err');
+      }
+    }
+
+    if (!ok) failed++;
+
+    const pct = Math.round(((i+1) / totalChunks) * 100);
+    document.getElementById('progressFill').style.width = pct + '%';
+  }
+
+  log(failed === 0
+    ? `\n✓ Upload complete. file_id: ${fileId}`
+    : `\n⚠ Done with ${failed} failed chunks. file_id: ${fileId}`,
+    failed === 0 ? 'ok' : 'err'
+  );
+  btn.disabled = false;
+}
+
+async function doSearch() {
+  const q = document.getElementById('searchInput').value.trim();
+  if (!q) return;
+
+  const container = document.getElementById('searchResults');
+  container.innerHTML = '<p style="color:var(--muted);font-size:0.8rem;font-family:\'IBM Plex Mono\',monospace">Searching…</p>';
+
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=20`);
+    const data = await res.json();
+
+    if (!data.results.length) {
+      container.innerHTML = '<p style="color:var(--muted);font-size:0.8rem">No results found.</p>';
+      return;
+    }
+
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(${escaped})`, 'gi');
+
+    container.innerHTML = data.results.map(r => `
+      <div class="result-card">
+        <div class="result-meta">${r.filename} · chunk ${r.chunk_index} · id:${r.chunk_id}</div>
+        <div class="result-snippet">${r.snippet.replace(re, '<mark>$1</mark>')}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    container.innerHTML = `<p style="color:var(--error);font-size:0.8rem">Error: ${e.message}</p>`;
+  }
+}
+</script>
+</body>
+</html>
