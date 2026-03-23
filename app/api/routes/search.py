@@ -1,62 +1,44 @@
-from fastapi import APIRouter, Depends, Query, HTTPException
-from sqlalchemy.orm import Session
+"""
+Search controller — thin layer.
+No business logic. No direct DB calls.
+"""
+from typing import Optional
 
-from app.db.database import get_db
-from app.db.models import PDFChunk
-from app.repositories.chunk_repository import SQLChunkRepository
-from app.services.pdf_service import PDFService
-from app.storage.storage import get_storage
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-router = APIRouter()
+from app.dependencies import get_search_repo
+from app.repositories.base import AbstractSearchRepository
+from app.services.search_service import SearchService
+from app.api.security import RateLimiter
+
+router = APIRouter(prefix="/search", tags=["search"])
 
 
-@router.get("/search")
+def _get_service(
+    search_repo: AbstractSearchRepository = Depends(get_search_repo),
+) -> SearchService:
+    return SearchService(search_repo)
+
+
+@router.get("/")
 def search(
-    q:     str = Query(..., min_length=1, max_length=500),
-    limit: int = Query(20, ge=1, le=100),
-    db: Session = Depends(get_db),
+    q: str = Query(
+        ..., 
+        min_length=2, 
+        max_length=150, 
+        pattern="^[A-Za-z0-9\\s\\-_.,?!]+$",
+        description="Search query (alphanumeric and basic punctuation only)"
+    ),
+    upload_id: Optional[str] = Query(None, description="Limit search to one PDF"),
+    limit: int = Query(10, ge=1, le=50),
+    service: SearchService = Depends(_get_service),
+    _rate_limit: bool = Depends(RateLimiter(max_requests=50, window_seconds=60))
 ):
-    results = PDFService(SQLChunkRepository(db), get_storage()).search(q.strip(), limit)
-    return {
-        "query":   q,
-        "total":   len(results),
-        "results": [
-            {
-                "chunk_id":    r.id,
-                "upload_id":   r.upload_id,
-                "filename":    r.filename,
-                "passage_index": r.passage_index,
-                "snippet": extract_snippet(r.content, q.strip(), 100),
-            }
-            for r in results
-        ],
-    }
-
-def extract_snippet(content: str, query: str, window: int = 100) -> str:
-    pos = content.lower().find(query.lower())
-    if pos == -1:
-        return content[:200] + ("…" if len(content) > 200 else "")
-    start = max(0, pos - window)
-    end = min(len(content), pos + len(query) + window)
-    snippet = content[start:end]
-    if start > 0:
-        snippet = "…" + snippet
-    if end < len(content):
-        snippet = snippet + "…"
-    return snippet
-
-@router.get("/debug")
-def debug(db: Session = Depends(get_db)):
-    rows = db.query(PDFChunk).all()
-    return {
-        "total_text_chunks": len(rows),
-        "chunks": [
-            {
-                "filename":       r.filename,
-                "passage_index":    r.passage_index,
-                "content_length": len(r.content),
-                "preview":        r.content[:150],
-            }
-            for r in rows
-        ],
-    }
+    """
+    Read path — search extracted text across all (or one) uploaded PDF.
+    Returns ranked chunks with surrounding context snippet.
+    """
+    try:
+        return service.search(q, upload_id, limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

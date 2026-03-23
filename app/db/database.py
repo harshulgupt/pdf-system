@@ -1,31 +1,37 @@
-"""
-Database layer — currently SQLite via SQLAlchemy.
-To swap to PostgreSQL: change DATABASE_URL and install psycopg2.
-To swap to MongoDB: replace this file and update the repository.
-"""
-import os
+import logging
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./pdf_store.db")
+from app.config import get_settings
 
-# SQLite needs this connect_args; remove for Postgres
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+logger = logging.getLogger(__name__)
 
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
+settings = get_settings()
+
+engine = create_engine(
+    settings.database_url,
+    connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {},
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=10,
+)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-class Base(DeclarativeBase):
-    pass
+Base = declarative_base()
+
+
+def init_db() -> None:
+    """Create tables on first boot. Text is stored in B2, not Postgres."""
+    from app.models import models  # noqa: F401 — registers models with Base
+    Base.metadata.create_all(bind=engine)
+
 
 def get_db():
-    """FastAPI dependency — yields a DB session."""
+    """FastAPI dependency — yields a DB session and closes it after the request."""
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-
-def init_db():
-    from app.db import models  # noqa: F401 — registers models
-    Base.metadata.create_all(bind=engine)

@@ -1,94 +1,59 @@
-"""
-Upload routes.
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from pydantic import BaseModel, Field
+from app.dependencies import get_upload_repo, get_search_repo
+from app.repositories.base import AbstractUploadRepository, AbstractSearchRepository
+from app.services.upload_service import UploadService
+from app.api.security import RateLimiter
 
-POST   /api/upload/start          → register upload session
-POST   /api/upload/chunk          → receive one binary chunk, return IMMEDIATELY
-GET    /api/upload/status/{id}    → poll: uploading → assembling → indexing → indexed
-DELETE /api/clear                 → wipe everything
-"""
-from fastapi import APIRouter, BackgroundTasks, Depends, UploadFile, File, Form, HTTPException
-from sqlalchemy.orm import Session
+router = APIRouter(prefix="/upload", tags=["upload"])
 
-from app.db.database import get_db
-from app.repositories.chunk_repository import SQLChunkRepository
-from app.services.pdf_service import PDFService
-from app.storage.storage import get_storage
+class InitUploadRequest(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=255, pattern=r"^[\w\-. ]+$")
+    total_chunks: int = Field(..., gt=0, le=10000)
+    file_hash: str = Field(None, description="SHA-256 hash or unique identifier of the file")
 
-router = APIRouter()
+class ConfirmChunkRequest(BaseModel):
+    upload_id: str
+    chunk_index: int
 
-MAX_CHUNK_BYTES = 10 * 1024 * 1024
+def _get_service(
+    upload_repo: AbstractUploadRepository = Depends(get_upload_repo),
+    search_repo: AbstractSearchRepository = Depends(get_search_repo),
+) -> UploadService:
+    return UploadService(upload_repo, search_repo)
 
-
-def _service(db: Session) -> PDFService:
-    return PDFService(SQLChunkRepository(db), get_storage())
-
-
-@router.post("/upload/start")
-def start_upload(
-    upload_id:    str = Form(...),
-    filename:     str = Form(...),
-    total_chunks: int = Form(...),
-    db: Session = Depends(get_db),
+@router.post("/init", status_code=status.HTTP_201_CREATED)
+def init_upload(
+    body: InitUploadRequest, 
+    service: UploadService = Depends(_get_service),
+    _rate_limit: bool = Depends(RateLimiter(max_requests=20, window_seconds=60))
 ):
-    if not filename.lower().endswith(".pdf"):
-        raise HTTPException(400, "Only PDF files accepted.")
-    if total_chunks < 1:
-        raise HTTPException(400, "total_chunks must be >= 1.")
+    if not body.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+    return service.init_upload(body.filename, body.total_chunks, file_hash=body.file_hash)
 
-    session = _service(db).start_upload(upload_id, filename, total_chunks)
-    return {
-        "upload_id":    session.upload_id,
-        "filename":     session.filename,
-        "total_chunks": session.total_chunks,
-        "status":       session.status,
-    }
-
-
-@router.post("/upload/chunk")
-async def upload_chunk(
-    background_tasks: BackgroundTasks,
-    upload_id:        str        = Form(...),
-    passage_index:    int        = Form(...),
-    file:             UploadFile = File(...),
-    db:               Session    = Depends(get_db),
+@router.post("/chunk/confirm")
+def confirm_chunk(
+    body: ConfirmChunkRequest, 
+    service: UploadService = Depends(_get_service),
+    _rate_limit: bool = Depends(RateLimiter(max_requests=600, window_seconds=60))
 ):
-    """
-    Saves the binary chunk to disk and returns immediately.
-    If this was the last chunk, assembly+indexing is handed off to a
-    background task — it runs AFTER this response is sent to the client.
-    That's why upload feels instant even for huge files.
-    """
-    if passage_index < 0:
-        raise HTTPException(400, "passage_index must be >= 0.")
-
-    data = await file.read()
-    if len(data) == 0:
-        raise HTTPException(400, "Empty chunk.")
-    if len(data) > MAX_CHUNK_BYTES:
-        raise HTTPException(413, f"Chunk too large (max {MAX_CHUNK_BYTES // 1024 // 1024} MB).")
-
+    """Called by browser after successfully putting a chunk to B2."""
     try:
-        svc    = _service(db)
-        result = svc.receive_chunk(upload_id, passage_index, data)
+        return service.confirm_chunk(body.upload_id, body.chunk_index)
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(status_code=404, detail=str(e))
 
-    # All chunks received? Hand off to background — don't block this response
-    if result["all_received"]:
-        background_tasks.add_task(svc.assemble_and_index, upload_id)
-
-    return result
-
-
-@router.get("/upload/status/{upload_id}")
-def upload_status(upload_id: str, db: Session = Depends(get_db)):
+@router.post("/{upload_id}/complete")
+def complete_upload(
+    upload_id: str, 
+    background_tasks: BackgroundTasks, 
+    service: UploadService = Depends(_get_service),
+    _rate_limit: bool = Depends(RateLimiter(max_requests=20, window_seconds=60))
+):
     try:
-        return _service(db).get_status(upload_id)
+        return service.complete_upload(upload_id, background_tasks)
     except ValueError as e:
-        raise HTTPException(404, str(e))
-
-
-@router.delete("/clear")
-def clear_index(db: Session = Depends(get_db)):
-    deleted = _service(db).clear_all()
-    return {"status": "ok", "chunks_deleted": deleted}
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
