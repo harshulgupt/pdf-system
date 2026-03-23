@@ -310,12 +310,19 @@ async function startUpload() {
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
-async function doSearch() {
+let _searchPollTimeout = null;
+
+async function doSearch(isPolling = false) {
+  clearTimeout(_searchPollTimeout);
+
   const q = document.getElementById('search-query').value.trim();
   if (!q) return;
   const uploadId  = document.getElementById('upload-id-filter').value.trim();
   const resultsEl = document.getElementById('results');
-  resultsEl.innerHTML = '<div class="no-results">Searching…</div>';
+  
+  if (!isPolling) {
+    resultsEl.innerHTML = '<div class="no-results">Searching…</div>';
+  }
 
   let url = `${API}/api/search/?q=${encodeURIComponent(q)}&limit=10`;
   if (uploadId) url += `&upload_id=${encodeURIComponent(uploadId)}`;
@@ -325,7 +332,15 @@ async function doSearch() {
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
 
-    if (!data.results.length) {
+    // If still processing, show the live message and poll automatically
+    if (data.status && data.status !== 'ready' && data.status !== 'failed' && data.status !== 'not_found') {
+      const msg = data.message || "Document is still processing...";
+      resultsEl.innerHTML = `<div class="no-results" style="color:#0284c7; font-weight:500;">${escHtml(msg)}</div>`;
+      _searchPollTimeout = setTimeout(() => doSearch(true), 3000);
+      return;
+    }
+
+    if (!data.results || !data.results.length) {
       resultsEl.innerHTML = '<div class="no-results">No results found.</div>';
       return;
     }
@@ -337,6 +352,9 @@ async function doSearch() {
       </div>`;
 
     const cards = data.results.map(r => {
+      // Hide the 'fake' processing result if by chance it slipped through
+      if (r.chunk_id === "processing-status") return "";
+
       const occurrenceList = r.snippets.map((snippet, idx) => `
         <div style="padding:0.35rem 0.6rem;margin:0.25rem 0;background:#fff;border-left:3px solid #0284c7;font-size:0.82rem;font-family:monospace;line-height:1.5;white-space:pre-wrap">${highlight(escHtml(snippet), q)}</div>
       `).join('');

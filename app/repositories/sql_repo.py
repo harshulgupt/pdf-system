@@ -151,11 +151,20 @@ class SQLSearchRepository(AbstractSearchRepository):
                 extracted_chunks = self.db.query(PDFChunk).filter(PDFChunk.upload_id == upload_id).count()
                 pages_so_far = extracted_chunks * 5
                 
+                msg = f"⏳ Extracting text... roughly {pages_so_far} pages processed so far. Please wait for it to finish."
+                
                 return {
                     "total_occurrences": 0, 
-                    "results": [], 
+                    "results": [{
+                        "chunk_id": "processing-status",
+                        "upload_id": upload.id,
+                        "chunk_index": 0,
+                        "filename": upload.filename,
+                        "snippets": [msg],
+                        "occurrences_in_chunk": 0
+                    }], 
                     "status": upload.status.value, 
-                    "message": f"Extracting text... roughly {pages_so_far} pages processed so far. Please wait for it to finish."
+                    "message": msg
                 }
 
         q = (
