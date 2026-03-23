@@ -142,6 +142,22 @@ class SQLSearchRepository(AbstractSearchRepository):
         Fetch chunk metadata from Postgres, download text from B2,
         and search in Python. No FTS needed — Postgres stays tiny.
         """
+        # If a specific upload_id is requested, check its status first
+        if upload_id:
+            upload = self.db.query(PDFUpload).filter(PDFUpload.id == upload_id).first()
+            if not upload:
+                return {"total_occurrences": 0, "results": [], "status": "not_found", "message": "Upload not found."}
+            if upload.status != UploadStatus.ready:
+                extracted_chunks = self.db.query(PDFChunk).filter(PDFChunk.upload_id == upload_id).count()
+                pages_so_far = extracted_chunks * 5
+                
+                return {
+                    "total_occurrences": 0, 
+                    "results": [], 
+                    "status": upload.status.value, 
+                    "message": f"Extracting text... roughly {pages_so_far} pages processed so far. Please wait for it to finish."
+                }
+
         q = (
             self.db.query(PDFChunk.id, PDFChunk.upload_id, PDFChunk.chunk_index,
                           PDFChunk.r2_text_key, PDFUpload.filename)
