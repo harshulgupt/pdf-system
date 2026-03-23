@@ -38,14 +38,12 @@ class SearchService:
             "results": data["results"],
         }
 
-        # Save to cache
-        if redis_client:
+        # Save to cache only if we actually found results
+        # Never cache empty results to avoid false negatives while extracting
+        if redis_client and data["total_occurrences"] > 0:
             try:
-                # If we found results, cache for 1 hour.
-                # If empty, cache for only 5 seconds to prevent caching
-                # 'empty' while a document is still extracting in the background.
-                ttl = 3600 if data["total_occurrences"] > 0 else 5
-                redis_client.setex(cache_key, ttl, json.dumps(result))
+                # Cache results for 1 hour (3600 seconds)
+                redis_client.setex(cache_key, 3600, json.dumps(result))
             except Exception as e:
                 pass  # Ignore Redis errors on write
 
