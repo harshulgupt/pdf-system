@@ -33,10 +33,15 @@ class SearchService:
         data = self.search_repo.search(query_cleaned, upload_id, limit)
         result = {
             "query": query,
-            "total_occurrences": data["total_occurrences"],
-            "total_chunks_matched": len(data["results"]),
-            "results": data["results"],
+            "total_occurrences": data.get("total_occurrences", 0),
+            "total_chunks_matched": len(data.get("results", [])),
+            "results": data.get("results", []),
         }
+
+        if "status" in data:
+            result["status"] = data["status"]
+        if "message" in data:
+            result["message"] = data["message"]
 
         # Save to cache only if we actually found results
         # Never cache empty results to avoid false negatives while extracting
